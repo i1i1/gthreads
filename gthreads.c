@@ -63,7 +63,7 @@ gthreads_switch(void)
 	return 0;
 }
 
-void
+static void
 tick(int signo, siginfo_t *siginfo, void *cont)
 {
 	(void) signo;
@@ -73,7 +73,7 @@ tick(int signo, siginfo_t *siginfo, void *cont)
 	gthreads_switch();
 }
 
-int
+static int
 stack_init(stack_t *s)
 {
 	if (!(s->ss_sp = malloc(GTHREADS_STACKSIZE)))
@@ -83,7 +83,7 @@ stack_init(stack_t *s)
 	return 0;
 }
 
-void
+static void
 stack_free(stack_t *s)
 {
 	free(s->ss_sp);
@@ -91,7 +91,7 @@ stack_free(stack_t *s)
 	s->ss_size = 0;
 }
 
-int
+static int
 gthreads_init_timer(void)
 {
 	struct sigaction sigact;
@@ -115,7 +115,7 @@ gthreads_init_timer(void)
 	return 0;
 }
 
-int
+static int
 gthreads_update_timer(void)
 {
 	struct itimerspec tm;
@@ -133,7 +133,7 @@ gthreads_update_timer(void)
 	return timer_settime(timer, 0, &tm, NULL);
 }
 
-int
+static int
 gthreads_init_exiter(void)
 {
 	if (getcontext(&exiter))
@@ -144,7 +144,7 @@ gthreads_init_exiter(void)
 	return 0;
 }
 
-int
+static int
 gthreads_init(void)
 {
 	if (gthreads_init_timer())
