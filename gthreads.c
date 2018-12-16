@@ -177,9 +177,9 @@ int
 gthreads_spawn(gthreads_entry *entry)
 {
 	struct thread_info *nt;
-	
+
 	assert(entry);
-	
+
 	if (total_threads == 0 && gthreads_init())
 		return -1;
 
@@ -213,6 +213,9 @@ gthreads_destroy(int thrd)
 {
 	struct thread_info *tp;
 
+	if (!total_threads)
+		return;
+
 	tp = head;
 
 	if (head->id == thrd)
@@ -225,21 +228,22 @@ gthreads_destroy(int thrd)
 		if (tp->ctx.uc_stack.ss_sp != native_stack)
 			stack_free(&tp->ctx.uc_stack);
 
-		total_threads--;
-
 		tp->next->prev = tp->prev;
 		tp->prev->next = tp->next;
-		free(tp);
 
-		if (!total_threads)
-			exit(0);
+		total_threads--;
+		gthreads_update_timer();
 
 		if (tp == cur_thread) {
 			cur_thread = cur_thread->next;
+			free(tp);
 			setcontext(&cur_thread->ctx);
+			return;
 		}
 
+		free(tp);
 		return;
+
 	} while ((tp = tp->next) != head);
 }
 
