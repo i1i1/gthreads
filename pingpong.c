@@ -16,7 +16,7 @@ pingpong(void)
 
 		i = (size_t)gthreads_recieve(&who);
 
-		printf("%x got %d from %x\n", gthreads_getid(), i, who);
+		printf("% 2d|% 4d|% 3d\n", who, gthreads_getid(), i);
 
 		if (i == total)
 			return;
@@ -36,6 +36,9 @@ main(void)
 	who = gthreads_spawn(pingpong);
 
 	printf("send 0 from %x to %x\n", gthreads_getid(), who);
+
+	printf("to|from|val\n");
+	printf("-----------\n");
 
 	gthreads_send(who, 0);
 	pingpong();

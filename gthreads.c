@@ -42,7 +42,7 @@ static void *native_stack;
 int
 gthreads_switch(void)
 {
-	int here;
+	volatile int here;
 
 	here = 0;
 
@@ -59,7 +59,6 @@ gthreads_switch(void)
 		}
 	}
 
-	/* Actually should never be here */
 	return 0;
 }
 
