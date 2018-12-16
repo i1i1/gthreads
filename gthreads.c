@@ -9,7 +9,7 @@
 #include "gthreads.h"
 
 
-#define GTHREADS_STACKSIZE	(4 * 4096)
+#define GTHREADS_STACKSIZE	1024
 
 #define SIG_TIMER			SIGRTMIN
 
@@ -36,6 +36,9 @@ static int nextid;
 static void *native_stack;
 
 
+static int gthreads_update_timer(void);
+
+
 int
 gthreads_switch(void)
 {
@@ -48,6 +51,7 @@ gthreads_switch(void)
 
 	if (here++ == 0) {
 		cur_thread = cur_thread->next;
+		gthreads_update_timer();
 
 		if (setcontext(&cur_thread->ctx)) {
 			/* Restore previous thread data */
@@ -115,16 +119,20 @@ static int
 gthreads_update_timer(void)
 {
 	struct itimerspec tm;
+	int sec;
+
+	sec = 1000000000;
 
 	if (total_threads == 1) {
 		tm.it_value.tv_sec  = 1;
 		tm.it_value.tv_nsec = 0;
+	} else if (sec/total_threads > GTHREADS_MINTIMER) {
+		tm.it_value.tv_sec  = 0;
+		tm.it_value.tv_nsec = sec/total_threads;
 	} else {
 		tm.it_value.tv_sec  = 0;
-		tm.it_value.tv_nsec = 1000000000/total_threads;
+		tm.it_value.tv_nsec = GTHREADS_MINTIMER;
 	}
-
-	tm.it_interval = tm.it_value;
 
 	return timer_settime(timer, 0, &tm, NULL);
 }
@@ -165,9 +173,6 @@ gthreads_spawn(gthreads_entry *entry)
 	if (total_threads == 0 && gthreads_init())
 		return -1;
 
-	if (total_threads == GTHREADS_MAXTHREADS)
-		return -1;
-
 	if (!(nt = malloc(sizeof(*nt))))
 		return -1;
 
@@ -179,20 +184,16 @@ gthreads_spawn(gthreads_entry *entry)
 
 	makecontext(&nt->ctx, entry, 0);
 
-	nt->prev = cur_thread;
-	nt->next = cur_thread->next;
-	cur_thread->next = nt;
-
 	nt->id = nextid++;
 	nt->sender = -1;
 
+	nt->prev = cur_thread;
+	nt->next = cur_thread->next;
+	cur_thread->next = nt;
+	nt->next->prev = nt;
+
 	total_threads++;
 	gthreads_update_timer();
-
-	if (total_threads == 2) {
-		head->next = head->prev = nt;
-		nt->next = nt->prev = head;
-	}
 
 	return nt->id;
 }
@@ -250,8 +251,16 @@ gthreads_send(int dst, void *val)
 	if (tp->id != dst)
 		return 1;
 
-	tp->msg = val;
+	/* Waiting for receiver to get all the messages */
+	while (tp->sender != -1)
+		gthreads_switch();
+
 	tp->sender = cur_thread->id;
+	tp->msg = val;
+
+	/* Waiting for receiver to recieve this message */
+	while (tp->sender == cur_thread->id)
+		gthreads_switch();
 
 	return 0;
 }
@@ -259,16 +268,19 @@ gthreads_send(int dst, void *val)
 void *
 gthreads_recieve(int *thrd)
 {
-	assert(thrd);
+	void *res;
 
 	/* Waiting for message */
 	while (cur_thread->sender == -1)
 		gthreads_switch();
 
-	*thrd = cur_thread->sender;
+	if (thrd)
+		*thrd = cur_thread->sender;
+
+	res = cur_thread->msg;
 	cur_thread->sender = -1;
 
-	return cur_thread->msg;
+	return res;
 }
 
 int
