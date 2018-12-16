@@ -6,8 +6,6 @@
 
 #include <assert.h>
 
-#include <stdio.h>
-
 #include "gthreads.h"
 
 
@@ -32,7 +30,6 @@ static struct thread_info *cur_thread;
 static int total_threads = 0;
 
 static timer_t timer;
-static ucontext_t exiter;
 static int nextid;
 
 /* In order to not `free` it */
@@ -133,23 +130,9 @@ gthreads_update_timer(void)
 }
 
 static int
-gthreads_init_exiter(void)
-{
-	if (getcontext(&exiter))
-		return 1;
-	if (stack_init(&exiter.uc_stack))
-		return 1;
-	makecontext(&exiter, gthreads_exit, 0);
-	return 0;
-}
-
-static int
 gthreads_init(void)
 {
 	if (gthreads_init_timer())
-		return 1;
-
-	if (gthreads_init_exiter())
 		return 1;
 
 	if (!(head = malloc(sizeof(*head))))
@@ -163,7 +146,6 @@ gthreads_init(void)
 	head->sender = -1;
 	head->id = 0;
 	head->next = head->prev = head;
-	head->ctx.uc_link = &exiter;
 
 	total_threads = 1;
 	cur_thread = head;
@@ -183,6 +165,9 @@ gthreads_spawn(gthreads_entry *entry)
 	if (total_threads == 0 && gthreads_init())
 		return -1;
 
+	if (total_threads == GTHREADS_MAXTHREADS)
+		return -1;
+
 	if (!(nt = malloc(sizeof(*nt))))
 		return -1;
 
@@ -200,10 +185,14 @@ gthreads_spawn(gthreads_entry *entry)
 
 	nt->id = nextid++;
 	nt->sender = -1;
-	nt->ctx.uc_link = &exiter;
 
 	total_threads++;
 	gthreads_update_timer();
+
+	if (total_threads == 2) {
+		head->next = head->prev = nt;
+		nt->next = nt->prev = head;
+	}
 
 	return nt->id;
 }
@@ -212,9 +201,6 @@ void
 gthreads_destroy(int thrd)
 {
 	struct thread_info *tp;
-
-	if (!total_threads)
-		return;
 
 	tp = head;
 
@@ -231,7 +217,9 @@ gthreads_destroy(int thrd)
 		tp->next->prev = tp->prev;
 		tp->prev->next = tp->next;
 
-		total_threads--;
+		if (--total_threads == 0)
+			exit(0);
+
 		gthreads_update_timer();
 
 		if (tp == cur_thread) {

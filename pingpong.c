@@ -9,22 +9,27 @@ pingpong(void)
 	int who;
 	int total;
 
-	total = 10;
+	total = 11;
 
 	for (;;) {
 		int i;
 
 		i = (size_t)gthreads_recieve(&who);
 
-		printf("% 2d|% 4d|% 3d\n", who, gthreads_getid(), i);
+		printf("|% 5d|% 5d|% 5d|\n", who, gthreads_getid(), i);
 
-		if (i == total)
+		if (i == total) {
+			printf("+-----------------+\n");
+			gthreads_exit();
 			return;
+		}
 
 		gthreads_send(who, (void *)(size_t)++i);
 
-		if (i == total)
+		if (i == total) {
+			gthreads_exit();
 			return;
+		}
 	}
 }
 
@@ -37,8 +42,9 @@ main(void)
 
 	printf("send 0 from %x to %x\n", gthreads_getid(), who);
 
-	printf("to|from|val\n");
-	printf("-----------\n");
+	printf("+-----+-----+-----+\n");
+	printf("|   to| from|  val|\n");
+	printf("|-----+-----+-----|\n");
 
 	gthreads_send(who, 0);
 	pingpong();
