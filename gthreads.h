@@ -1,7 +1,8 @@
 #ifndef _GTHREADS_H_
 #define _GTHREADS_H_
 
-#define GTHREADS_MINTIMER	((long)(1000000000/2000))
+#define GTHREADS_MAXTHREADS	200
+#define GTHREADS_MINTIMER	((long)(1000000000/GTHREADS_MAXTHREADS))
 
 
 typedef void gthreads_entry(void);

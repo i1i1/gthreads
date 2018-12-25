@@ -1,5 +1,5 @@
 CC=gcc
-CFLAGS=-Wall -Wextra
+CFLAGS=-Wall -Wextra -g
 LDFLAGS=-lrt
 OUT0=pingpong
 OUT1=switch

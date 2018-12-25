@@ -13,11 +13,14 @@
 
 #define SIG_TIMER			SIGRTMIN
 
+typedef char gstack_t[GTHREADS_STACKSIZE];
+
 
 struct thread_info {
 	struct thread_info *prev;
 	struct thread_info *next;
 	ucontext_t ctx;
+	gstack_t st;
 	int id;
 
 	void *msg;
@@ -32,34 +35,41 @@ static int total_threads = 0;
 static timer_t timer;
 static int nextid;
 
-/* In order to not `free` it */
-static void *native_stack;
+static struct itimerspec unarmtm, mintm, tm;
 
 
-static int gthreads_update_timer(void);
+static int gthreads_arm_timer(void);
+static int gthreads_disarm_timer(void);
 
 
 int
 gthreads_switch(void)
 {
-	volatile int here;
+	static volatile int here;
+
+	if (total_threads < 2)
+		return 0;
 
 	here = 0;
+	gthreads_disarm_timer();
 
 	if (getcontext(&cur_thread->ctx))
 		return 1;
 
-	if (here++ == 0) {
-		cur_thread = cur_thread->next;
-		gthreads_update_timer();
+	if (here > 0)
+		return 0;
 
-		if (setcontext(&cur_thread->ctx)) {
-			/* Restore previous thread data */
-			cur_thread = cur_thread->prev;
-			return 1;
-		}
+	here++;
+	cur_thread = cur_thread->next;
+	gthreads_arm_timer();
+
+	if (setcontext(&cur_thread->ctx)) {
+		/* Restore previous thread data */
+		cur_thread = cur_thread->prev;
+		return 1;
 	}
 
+	/* Will never reach */
 	return 0;
 }
 
@@ -73,22 +83,11 @@ tick(int signo, siginfo_t *siginfo, void *cont)
 	gthreads_switch();
 }
 
-static int
-stack_init(stack_t *s)
-{
-	if (!(s->ss_sp = malloc(GTHREADS_STACKSIZE)))
-		return 1;
-
-	s->ss_size = GTHREADS_STACKSIZE;
-	return 0;
-}
-
 static void
-stack_free(stack_t *s)
+stack_init(stack_t *s, void *st)
 {
-	free(s->ss_sp);
-	s->ss_sp = NULL;
-	s->ss_size = 0;
+	s->ss_sp = st;
+	s->ss_size = GTHREADS_STACKSIZE;
 }
 
 static int
@@ -102,6 +101,21 @@ gthreads_init_timer(void)
 
 	sigev.sigev_notify = SIGEV_SIGNAL;
 	sigev.sigev_signo = SIG_TIMER;
+	sigev.sigev_value.sival_ptr = NULL;
+
+	unarmtm.it_interval.tv_sec = 0;
+	unarmtm.it_interval.tv_nsec = 0;
+	unarmtm.it_value.tv_sec = 0;
+	unarmtm.it_value.tv_nsec = 0;
+
+	mintm.it_interval.tv_sec = 0;
+	mintm.it_interval.tv_nsec = 0;
+	mintm.it_value.tv_sec = 0;
+	mintm.it_value.tv_nsec = GTHREADS_MINTIMER;
+
+	tm.it_interval.tv_sec = 0;
+	tm.it_interval.tv_nsec = 0;
+	tm.it_value.tv_sec  = 0;
 
 	if (sigemptyset(&sigact.sa_mask))
 		return 1;
@@ -116,23 +130,21 @@ gthreads_init_timer(void)
 }
 
 static int
-gthreads_update_timer(void)
+gthreads_disarm_timer(void)
 {
-	struct itimerspec tm;
-	int sec;
+	return timer_settime(timer, 0, &unarmtm, NULL);
+}
 
-	sec = 1000000000;
+static int
+gthreads_arm_timer(void)
+{
+	if (total_threads == 1)
+		return gthreads_disarm_timer();
 
-	if (total_threads == 1) {
-		tm.it_value.tv_sec  = 1;
-		tm.it_value.tv_nsec = 0;
-	} else if (sec/total_threads > GTHREADS_MINTIMER) {
-		tm.it_value.tv_sec  = 0;
-		tm.it_value.tv_nsec = sec/total_threads;
-	} else {
-		tm.it_value.tv_sec  = 0;
-		tm.it_value.tv_nsec = GTHREADS_MINTIMER;
-	}
+	if (total_threads >= GTHREADS_MAXTHREADS)
+		return timer_settime(timer, 0, &mintm, NULL);
+
+	tm.it_value.tv_nsec = 1000000000/total_threads;
 
 	return timer_settime(timer, 0, &tm, NULL);
 }
@@ -143,13 +155,8 @@ gthreads_init(void)
 	if (gthreads_init_timer())
 		return 1;
 
-	if (!(head = malloc(sizeof(*head))))
+	if (!(head = malloc(sizeof(struct thread_info))))
 		return 1;
-
-	if (getcontext(&head->ctx))
-		return 1;
-
-	native_stack = head->ctx.uc_stack.ss_sp;
 
 	head->sender = -1;
 	head->id = 0;
@@ -157,7 +164,6 @@ gthreads_init(void)
 
 	total_threads = 1;
 	cur_thread = head;
-
 	nextid = 1;
 
 	return 0;
@@ -173,15 +179,15 @@ gthreads_spawn(gthreads_entry *entry)
 	if (total_threads == 0 && gthreads_init())
 		return -1;
 
-	if (!(nt = malloc(sizeof(*nt))))
+	gthreads_disarm_timer();
+
+	if (!(nt = malloc(sizeof(struct thread_info))))
 		return -1;
 
 	if (getcontext(&nt->ctx))
 		return -1;
 
-	if (stack_init(&nt->ctx.uc_stack))
-		return -1;
-
+	stack_init(&nt->ctx.uc_stack, &nt->st);
 	makecontext(&nt->ctx, entry, 0);
 
 	nt->id = nextid++;
@@ -193,7 +199,7 @@ gthreads_spawn(gthreads_entry *entry)
 	nt->next->prev = nt;
 
 	total_threads++;
-	gthreads_update_timer();
+	gthreads_arm_timer();
 
 	return nt->id;
 }
@@ -203,6 +209,7 @@ gthreads_destroy(int thrd)
 {
 	struct thread_info *tp;
 
+	gthreads_disarm_timer();
 	tp = head;
 
 	if (head->id == thrd)
@@ -212,25 +219,26 @@ gthreads_destroy(int thrd)
 		if (tp->id != thrd)
 			continue;
 
-		if (tp->ctx.uc_stack.ss_sp != native_stack)
-			stack_free(&tp->ctx.uc_stack);
+		if (total_threads == 1) {
+			free(tp);
+			timer_delete(timer);
+			exit(0);
+		}
 
 		tp->next->prev = tp->prev;
 		tp->prev->next = tp->next;
-
-		if (--total_threads == 0)
-			exit(0);
-
-		gthreads_update_timer();
+		total_threads--;
 
 		if (tp == cur_thread) {
 			cur_thread = cur_thread->next;
 			free(tp);
+			gthreads_arm_timer();
 			setcontext(&cur_thread->ctx);
 			return;
 		}
 
 		free(tp);
+		gthreads_arm_timer();
 		return;
 
 	} while ((tp = tp->next) != head);
@@ -284,7 +292,7 @@ gthreads_recieve(int *thrd)
 }
 
 int
-gthreads_getid()
+gthreads_getid(void)
 {
 	return cur_thread->id;
 }
