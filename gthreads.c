@@ -1,3 +1,4 @@
+#include <stdio.h>
 #include <stdlib.h>
 #include <signal.h>
 #include <unistd.h>
@@ -22,6 +23,7 @@ struct thread_info {
 	ucontext_t ctx;
 	gstack_t st;
 	int id;
+	int delete;
 
 	void *msg;
 	int sender;
@@ -36,22 +38,40 @@ static timer_t timer;
 static int nextid;
 
 static struct itimerspec unarmtm, mintm, tm;
+static struct thread_info finaliser;
 
 
 static int gthreads_arm_timer(void);
 static int gthreads_disarm_timer(void);
 
 
+static void
+gthreads_finaliser(void)
+{
+	free(head);
+	exit(0);
+}
+
+static void
+gthreads_switch_finaliser(void)
+{
+	/* All or nothing here */
+	setcontext(&finaliser.ctx);
+}
+
 int
 gthreads_switch(void)
 {
 	static volatile int here;
 
-	if (total_threads < 2)
-		return 0;
-
 	here = 0;
 	gthreads_disarm_timer();
+
+	while (cur_thread->next->delete)
+		gthreads_destroy(cur_thread->next->id);
+
+	if (total_threads < 2)
+		return 0;
 
 	if (getcontext(&cur_thread->ctx))
 		return 1;
@@ -61,6 +81,7 @@ gthreads_switch(void)
 
 	here++;
 	cur_thread = cur_thread->next;
+
 	gthreads_arm_timer();
 
 	if (setcontext(&cur_thread->ctx)) {
@@ -150,9 +171,22 @@ gthreads_arm_timer(void)
 }
 
 static int
+gthreads_init_finaliser(void)
+{
+	if (getcontext(&finaliser.ctx))
+		return 1;
+	stack_init(&finaliser.ctx.uc_stack, &finaliser.st);
+	makecontext(&finaliser.ctx, gthreads_finaliser, 0);
+	return 0;
+}
+
+static int
 gthreads_init(void)
 {
 	if (gthreads_init_timer())
+		return 1;
+
+	if (gthreads_init_finaliser())
 		return 1;
 
 	if (!(head = malloc(sizeof(struct thread_info))))
@@ -160,6 +194,7 @@ gthreads_init(void)
 
 	head->sender = -1;
 	head->id = 0;
+	head->delete = 0;
 	head->next = head->prev = head;
 
 	total_threads = 1;
@@ -191,6 +226,7 @@ gthreads_spawn(gthreads_entry *entry)
 	makecontext(&nt->ctx, entry, 0);
 
 	nt->id = nextid++;
+	nt->delete = 0;
 	nt->sender = -1;
 
 	nt->prev = cur_thread;
@@ -212,30 +248,30 @@ gthreads_destroy(int thrd)
 	gthreads_disarm_timer();
 	tp = head;
 
-	if (head->id == thrd)
-		head = head->next;
-
 	do {
 		if (tp->id != thrd)
 			continue;
 
 		if (total_threads == 1) {
-			free(tp);
 			timer_delete(timer);
+			gthreads_switch_finaliser();
+			/* All or nothing here */
 			exit(0);
 		}
 
-		tp->next->prev = tp->prev;
-		tp->prev->next = tp->next;
-		total_threads--;
-
 		if (tp == cur_thread) {
-			cur_thread = cur_thread->next;
-			free(tp);
-			gthreads_arm_timer();
-			setcontext(&cur_thread->ctx);
+			cur_thread->delete = 1;
+//			gthreads_trace();
+			gthreads_switch();
 			return;
 		}
+
+		total_threads--;
+		tp->next->prev = tp->prev;
+		tp->prev->next = tp->next;
+
+		if (head->id == thrd)
+			head = head->next;
 
 		free(tp);
 		gthreads_arm_timer();
@@ -258,6 +294,8 @@ gthreads_send(int dst, void *val)
 
 	if (tp->id != dst)
 		return 1;
+	if (tp->delete)
+		return 1;
 
 	/* Waiting for receiver to get all the messages */
 	while (tp->sender != -1)
@@ -267,8 +305,9 @@ gthreads_send(int dst, void *val)
 	tp->msg = val;
 
 	/* Waiting for receiver to recieve this message */
-	while (tp->sender == cur_thread->id)
+	while (tp->sender == cur_thread->id && tp->delete == 0) {
 		gthreads_switch();
+	}
 
 	return 0;
 }
@@ -298,8 +337,24 @@ gthreads_getid(void)
 }
 
 void
+gthreads_trace()
+{
+#define N(ab)	((ab)->id)
+	struct thread_info *tp;
+	tp = head;
+	printf("Trace: cur %d\n", N(cur_thread));
+	do {
+		printf("thread %d %d %d | flag : %d | sender : %d\n", N(tp->prev), N(tp), N(tp->next),
+						tp->delete, tp->sender);
+	} while ((tp = tp->next) != head);
+#undef N
+	printf("END\n");
+}
+
+void
 gthreads_exit(void)
 {
+//	gthreads_trace();
 	gthreads_destroy(cur_thread->id);
 }
 

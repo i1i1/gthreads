@@ -30,14 +30,15 @@ void *gthreads_recieve(int *thrd);
 int gthreads_getid(void);
 
 /*
- * Switches manually to other available thread,
- * or returns 1 if fails.
+ * Switches manually to other available thread, or returns 1 if fails.
  */
 int gthreads_switch(void);
 
 /*
  * Exits from current thread.
  * Should be also invoked in main thread in order to exit!
+ *
+ * But you can use exit(3) in order to terminate whole process.
  */
 void gthreads_exit(void);
 

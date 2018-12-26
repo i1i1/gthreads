@@ -9,7 +9,7 @@ pingpong(void)
 	int who;
 	int total;
 
-	total = 1000;
+	total = 11;
 
 	for (;;) {
 		int i;

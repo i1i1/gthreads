@@ -1,23 +1,15 @@
 CC=gcc
 CFLAGS=-Wall -Wextra -g
 LDFLAGS=-lrt
-OUT0=pingpong
-OUT1=switch
-OUT2=sieve
 
-all: build
+all: pingpong switch sieve
 
-build: pre
-	$(CC) $(CFLAGS) $(LDFLAGS) -o $(OUT0) pingpong.o gthreads.o
-	$(CC) $(CFLAGS) $(LDFLAGS) -o $(OUT1) switch.o gthreads.o
-	$(CC) $(CFLAGS) $(LDFLAGS) -o $(OUT2) sieve.o gthreads.o
-
-pre: pingpong.c gthreads.c gthreads.h
-	$(CC) $(CFLAGS) -c pingpong.c switch.c sieve.c gthreads.c
+pingpong: pingpong.o gthreads.o
+switch: switch.o gthreads.o
+sieve: sieve.o gthreads.o
 
 debug: CFLAGS+=-DDEBUG_ON
-debug: build
+debug: all
 
 clean:
-	$(RM) *.o $(OUT0) $(OUT1) $(OUT2)
-
+	$(RM) *.o pingpong switch sieve
