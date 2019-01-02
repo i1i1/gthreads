@@ -5,13 +5,13 @@
 #define GTHREADS_MINTIMER	((long)(1000000000/GTHREADS_MAXTHREADS))
 
 
-typedef void gthreads_entry(void);
+typedef void gthreads_entry(void *args);
 
 
 /*
  * Returns -1 if fails and id of new thread on success.
  */
-int gthreads_spawn(gthreads_entry *entry);
+int gthreads_spawn(gthreads_entry *entry, void *args);
 void gthreads_destroy(int thrd);
 
 /*
@@ -41,6 +41,13 @@ int gthreads_switch(void);
  * But you can use exit(3) in order to terminate whole process.
  */
 void gthreads_exit(void);
+
+/*
+ * TODO: implement function:
+ *
+ * Waits for thread to terminate, if one exists.
+ *		void gthreads_wait(int thrd);
+ */
 
 #endif /* _GTHREADS_H_ */
 

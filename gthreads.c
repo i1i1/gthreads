@@ -15,6 +15,7 @@
 #define SIG_TIMER			SIGRTMIN
 
 typedef char gstack_t[GTHREADS_STACKSIZE];
+typedef void mkcont_t(); // In order to disable warning
 
 
 struct thread_info {
@@ -32,6 +33,7 @@ struct thread_info {
 
 static struct thread_info *head;
 static struct thread_info *cur_thread;
+
 static int total_threads = 0;
 
 static timer_t timer;
@@ -59,19 +61,12 @@ gthreads_switch_finaliser(void)
 	setcontext(&finaliser.ctx);
 }
 
-int
-gthreads_switch(void)
+static int
+gthreads_switch_to_thrd(struct thread_info *thrd)
 {
-	static volatile int here;
+	int here;
 
 	here = 0;
-	gthreads_disarm_timer();
-
-	while (cur_thread->next->delete)
-		gthreads_destroy(cur_thread->next->id);
-
-	if (total_threads < 2)
-		return 0;
 
 	if (getcontext(&cur_thread->ctx))
 		return 1;
@@ -80,9 +75,7 @@ gthreads_switch(void)
 		return 0;
 
 	here++;
-	cur_thread = cur_thread->next;
-
-	gthreads_arm_timer();
+	cur_thread = thrd;
 
 	if (setcontext(&cur_thread->ctx)) {
 		/* Restore previous thread data */
@@ -92,6 +85,22 @@ gthreads_switch(void)
 
 	/* Will never reach */
 	return 0;
+}
+
+int
+gthreads_switch(void)
+{
+	if (cur_thread->next->delete) {
+		gthreads_disarm_timer();
+		while (cur_thread->next->delete)
+			gthreads_destroy(cur_thread->next->id);
+		gthreads_arm_timer();
+	}
+
+	if (total_threads < 2)
+		return 0;
+
+	return gthreads_switch_to_thrd(cur_thread->next);
 }
 
 static void
@@ -205,7 +214,7 @@ gthreads_init(void)
 }
 
 int
-gthreads_spawn(gthreads_entry *entry)
+gthreads_spawn(gthreads_entry *entry, void *args)
 {
 	struct thread_info *nt;
 
@@ -223,7 +232,7 @@ gthreads_spawn(gthreads_entry *entry)
 		return -1;
 
 	stack_init(&nt->ctx.uc_stack, &nt->st);
-	makecontext(&nt->ctx, entry, 0);
+	makecontext(&nt->ctx, (mkcont_t *)entry, 1, args);
 
 	nt->id = nextid++;
 	nt->delete = 0;
@@ -245,26 +254,22 @@ gthreads_destroy(int thrd)
 {
 	struct thread_info *tp;
 
+	if (total_threads == 1) {
+		timer_delete(timer);
+		gthreads_switch_finaliser();
+		/* All or nothing here */
+		exit(0);
+	}
+
+	if (cur_thread->id == thrd)
+		gthreads_exit();
+
 	gthreads_disarm_timer();
 	tp = head;
 
 	do {
 		if (tp->id != thrd)
 			continue;
-
-		if (total_threads == 1) {
-			timer_delete(timer);
-			gthreads_switch_finaliser();
-			/* All or nothing here */
-			exit(0);
-		}
-
-		if (tp == cur_thread) {
-			cur_thread->delete = 1;
-//			gthreads_trace();
-			gthreads_switch();
-			return;
-		}
 
 		total_threads--;
 		tp->next->prev = tp->prev;
@@ -297,17 +302,20 @@ gthreads_send(int dst, void *val)
 	if (tp->delete)
 		return 1;
 
+	/*
+	 * TODO: fix situation when tp gets destroyed before it recieves message.
+	 */
+
 	/* Waiting for receiver to get all the messages */
 	while (tp->sender != -1)
-		gthreads_switch();
+		gthreads_switch_to_thrd(tp);
 
 	tp->sender = cur_thread->id;
 	tp->msg = val;
 
 	/* Waiting for receiver to recieve this message */
-	while (tp->sender == cur_thread->id && tp->delete == 0) {
-		gthreads_switch();
-	}
+	while (tp->sender == cur_thread->id)
+		gthreads_switch_to_thrd(tp);
 
 	return 0;
 }
@@ -336,7 +344,11 @@ gthreads_getid(void)
 	return cur_thread->id;
 }
 
-void
+/*
+ * Just for debuging.
+ */
+
+static void
 gthreads_trace()
 {
 #define N(ab)	((ab)->id)
@@ -354,7 +366,8 @@ gthreads_trace()
 void
 gthreads_exit(void)
 {
+	cur_thread->delete = 1;
 //	gthreads_trace();
-	gthreads_destroy(cur_thread->id);
+	gthreads_switch();
 }
 

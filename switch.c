@@ -5,8 +5,9 @@
 
 
 static void
-yield_thread(void)
+yield_thread(void *_n)
 {
+	(void) _n;
 	int i;
 
 	printf("Hello, I am environment %d.\n", gthreads_getid());
@@ -35,7 +36,7 @@ main(int argc, char **argv)
 	n = atoi(argv[1]);
 
 	for (i = 0; i < n; i++) {
-		if (gthreads_spawn(yield_thread) == -1)
+		if (gthreads_spawn(yield_thread, NULL) == -1)
 			break;
 	}
 

@@ -4,12 +4,12 @@
 
 
 void
-pingpong(void)
+pingpong(void *total_p)
 {
 	int who;
 	int total;
 
-	total = 11;
+	total = (size_t)total_p;
 
 	for (;;) {
 		int i;
@@ -38,7 +38,7 @@ main(void)
 {
 	int who;
 
-	who = gthreads_spawn(pingpong);
+	who = gthreads_spawn(pingpong, (void *)11);
 
 	printf("send 0 from %x to %x\n", gthreads_getid(), who);
 
@@ -47,6 +47,6 @@ main(void)
 	printf("|-----+-----+-----|\n");
 
 	gthreads_send(who, 0);
-	pingpong();
+	pingpong((void *)11);
 }
 
