@@ -64,18 +64,20 @@ gthreads_switch_finaliser(void)
 static int
 gthreads_switch_to_thrd(struct thread_info *thrd)
 {
-	int here;
+	static volatile int passed;
 
-	here = 0;
+	passed = 0;
+	gthreads_disarm_timer();
 
 	if (getcontext(&cur_thread->ctx))
 		return 1;
 
-	if (here > 0)
+	if (passed > 0)
 		return 0;
 
-	here++;
+	passed++;
 	cur_thread = thrd;
+	gthreads_arm_timer();
 
 	if (setcontext(&cur_thread->ctx)) {
 		/* Restore previous thread data */
@@ -90,15 +92,15 @@ gthreads_switch_to_thrd(struct thread_info *thrd)
 int
 gthreads_switch(void)
 {
+	if (total_threads < 2)
+		return 0;
+
 	if (cur_thread->next->delete) {
 		gthreads_disarm_timer();
 		while (cur_thread->next->delete)
 			gthreads_destroy(cur_thread->next->id);
 		gthreads_arm_timer();
 	}
-
-	if (total_threads < 2)
-		return 0;
 
 	return gthreads_switch_to_thrd(cur_thread->next);
 }
@@ -347,19 +349,19 @@ gthreads_getid(void)
 /*
  * Just for debuging.
  */
-
 static void
 gthreads_trace()
 {
-#define N(ab)	((ab)->id)
 	struct thread_info *tp;
+
 	tp = head;
-	printf("Trace: cur %d\n", N(cur_thread));
+	printf("Trace: cur %d\n", cur_thread->id);
+
 	do {
-		printf("thread %d %d %d | flag : %d | sender : %d\n", N(tp->prev), N(tp), N(tp->next),
-						tp->delete, tp->sender);
+		printf("thread %d %d %d | flag : %d | sender : %d\n",
+					tp->prev->id, tp->id, tp->next->id, tp->delete, tp->sender);
 	} while ((tp = tp->next) != head);
-#undef N
+
 	printf("END\n");
 }
 
